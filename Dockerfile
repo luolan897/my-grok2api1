@@ -66,6 +66,12 @@ COPY --from=frontend-builder /src/frontend/dist /app/frontend/dist
 COPY VERSION /app/VERSION
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/grok2api-entrypoint
 
+# === 这里是修改的核心：将你的配置文件复制进容器各路径并授权 ===
+COPY --chown=grok2api:grok2api config.yaml /app/config.yaml
+RUN cp /app/config.yaml /run/grok2api/config.yaml && \
+    chown grok2api:grok2api /run/grok2api/config.yaml
+# ========================================================
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
