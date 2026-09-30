@@ -52,7 +52,7 @@ ENV TZ=Asia/Shanghai \
 RUN apk add --no-cache ca-certificates su-exec tzdata && \
     addgroup -S -g 10001 grok2api && \
     adduser -S -D -H -u 10001 -G grok2api grok2api && \
-    mkdir -p /app/data /run/grok2api /var/lib/grok2api-quality-guard /etc/secrets && \
+    mkdir -p /app/data /run/grok2api /var/lib/grok2api-quality-guard && \
     chown -R grok2api:grok2api \
       /app/data \
       /run/grok2api \
@@ -66,15 +66,21 @@ COPY --from=frontend-builder /src/frontend/dist /app/frontend/dist
 COPY VERSION /app/VERSION
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/grok2api-entrypoint
 
-# === 核心修改：让 /app/config.yaml 和 /run 路径软链接到 Render 的 Secret 挂载路径 ===
-RUN ln -sf /etc/secrets/config.yaml /app/config.yaml && \
-    ln -sf /etc/secrets/config.yaml /run/grok2api/config.yaml
-# ==============================================================================
+# === 修复 Render 权限问题的核心脚本：启动前以 root 权限拷贝配置并转交权限 ===
+RUN echo '#!/bin/sh' > /usr/local/bin/render-entrypoint.sh && \
+    echo 'if [ -f /etc/secrets/config.yaml ]; then' >> /usr/local/bin/render-entrypoint.sh && \
+    echo '  cp /etc/secrets/config.yaml /app/config.yaml' >> /usr/local/bin/render-entrypoint.sh && \
+    echo '  chown grok2api:grok2api /app/config.yaml' >> /usr/local/bin/render-entrypoint.sh && \
+    echo '  chmod 0644 /app/config.yaml' >> /usr/local/bin/render-entrypoint.sh && \
+    echo 'fi' >> /usr/local/bin/render-entrypoint.sh && \
+    echo 'exec /usr/local/bin/grok2api-entrypoint "$@"' >> /usr/local/bin/render-entrypoint.sh && \
+    chmod +x /usr/local/bin/render-entrypoint.sh
+# =======================================================================
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD wget -qO- http://127.0.0.1:8000/healthz >/dev/null || exit 1
 
-ENTRYPOINT ["/usr/local/bin/grok2api-entrypoint"]
-CMD ["/app/grok2api", "--config", "/etc/secrets/config.yaml", "--listen", "0.0.0.0:8000"]
+ENTRYPOINT ["/usr/local/bin/render-entrypoint.sh"]
+CMD ["/app/grok2api", "--config", "/app/config.yaml", "--listen", "0.0.0.0:8000"]
