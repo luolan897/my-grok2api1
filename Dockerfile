@@ -66,16 +66,44 @@ COPY --from=frontend-builder /src/frontend/dist /app/frontend/dist
 COPY VERSION /app/VERSION
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/grok2api-entrypoint
 
-# === 修复 Render 权限问题的核心脚本：启动前以 root 权限拷贝配置并转交权限 ===
-RUN echo '#!/bin/sh' > /usr/local/bin/render-entrypoint.sh && \
-    echo 'if [ -f /etc/secrets/config.yaml ]; then' >> /usr/local/bin/render-entrypoint.sh && \
-    echo '  cp /etc/secrets/config.yaml /app/config.yaml' >> /usr/local/bin/render-entrypoint.sh && \
-    echo '  chown grok2api:grok2api /app/config.yaml' >> /usr/local/bin/render-entrypoint.sh && \
-    echo '  chmod 0644 /app/config.yaml' >> /usr/local/bin/render-entrypoint.sh && \
-    echo 'fi' >> /usr/local/bin/render-entrypoint.sh && \
-    echo 'exec /usr/local/bin/grok2api-entrypoint "$@"' >> /usr/local/bin/render-entrypoint.sh && \
-    chmod +x /usr/local/bin/render-entrypoint.sh
-# =======================================================================
+# === 增强版启动注入脚本（带自动查找、双路径同步与日志诊断）===
+RUN cat <<'EOF' > /usr/local/bin/render-entrypoint.sh
+#!/bin/sh
+set -e
+
+echo "----------------------------------------"
+echo "==> [Render] 正在检查机密配置文件..."
+
+# 查找 /etc/secrets 下的任意 yaml 配置文件
+SRC=""
+if [ -f /etc/secrets/config.yaml ]; then
+    SRC="/etc/secrets/config.yaml"
+elif [ -f /etc/secrets/config.yml ]; then
+    SRC="/etc/secrets/config.yml"
+else
+    SRC=$(ls /etc/secrets/*.yaml /etc/secrets/*.yml 2>/dev/null | head -n 1 || true)
+fi
+
+if [ -n "$SRC" ] && [ -f "$SRC" ]; then
+    echo "==> [Render] 成功找到配置文件: $SRC"
+    # 同步复制到两处关键位置，彻底防止官方 entrypoint 覆盖
+    cp "$SRC" /app/config.yaml
+    cp "$SRC" /run/grok2api/config.yaml
+    chown grok2api:grok2api /app/config.yaml /run/grok2api/config.yaml
+    chmod 0644 /app/config.yaml /run/grok2api/config.yaml
+    echo "==> [Render] 配置文件已就绪，管理员配置片段如下："
+    grep -A 3 "bootstrapAdmin" /app/config.yaml || echo "警告: 未在配置中找到 bootstrapAdmin 字段！"
+else
+    echo "==> [Render] 错误: 未能在 /etc/secrets 找到任何 yaml 配置文件！"
+    echo "当前 /etc/secrets 目录内容:"
+    ls -la /etc/secrets 2>/dev/null || echo "/etc/secrets 目录不存在"
+fi
+echo "----------------------------------------"
+
+exec /usr/local/bin/grok2api-entrypoint "$@"
+EOF
+RUN chmod +x /usr/local/bin/render-entrypoint.sh
+# =======================================================
 
 EXPOSE 8000
 
