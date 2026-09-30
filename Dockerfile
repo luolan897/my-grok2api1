@@ -52,7 +52,7 @@ ENV TZ=Asia/Shanghai \
 RUN apk add --no-cache ca-certificates su-exec tzdata && \
     addgroup -S -g 10001 grok2api && \
     adduser -S -D -H -u 10001 -G grok2api grok2api && \
-    mkdir -p /app/data /run/grok2api /var/lib/grok2api-quality-guard && \
+    mkdir -p /app/data /run/grok2api /var/lib/grok2api-quality-guard /etc/secrets && \
     chown -R grok2api:grok2api \
       /app/data \
       /run/grok2api \
@@ -66,11 +66,10 @@ COPY --from=frontend-builder /src/frontend/dist /app/frontend/dist
 COPY VERSION /app/VERSION
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/grok2api-entrypoint
 
-# === 这里是修改的核心：将你的配置文件复制进容器各路径并授权 ===
-COPY --chown=grok2api:grok2api config.yaml /app/config.yaml
-RUN cp /app/config.yaml /run/grok2api/config.yaml && \
-    chown grok2api:grok2api /run/grok2api/config.yaml
-# ========================================================
+# === 核心修改：让 /app/config.yaml 和 /run 路径软链接到 Render 的 Secret 挂载路径 ===
+RUN ln -sf /etc/secrets/config.yaml /app/config.yaml && \
+    ln -sf /etc/secrets/config.yaml /run/grok2api/config.yaml
+# ==============================================================================
 
 EXPOSE 8000
 
@@ -78,4 +77,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD wget -qO- http://127.0.0.1:8000/healthz >/dev/null || exit 1
 
 ENTRYPOINT ["/usr/local/bin/grok2api-entrypoint"]
-CMD ["/app/grok2api", "--config", "/app/config.yaml", "--listen", "0.0.0.0:8000"]
+CMD ["/app/grok2api", "--config", "/etc/secrets/config.yaml", "--listen", "0.0.0.0:8000"]
